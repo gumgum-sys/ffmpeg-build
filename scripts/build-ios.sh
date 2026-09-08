@@ -43,6 +43,8 @@ FF_OPTS="${FF_OPTS//--enable-libshine/}"
 FF_OPTS="${FF_OPTS//libmp3lame,/}"
 FF_OPTS="${FF_OPTS//,libshine/}"
 FF_OPTS="$FF_OPTS --disable-programs --disable-autodetect --enable-cross-compile --arch=aarch64 --cpu=generic --target-os=darwin --disable-runtime-cpudetect --disable-asm"
+# VT is the iOS video path (AV1/H.264). --disable-autodetect would otherwise drop it.
+FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-decoder=av1 --enable-hwaccel=h264_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
 
 apply_ymix_patch
 
