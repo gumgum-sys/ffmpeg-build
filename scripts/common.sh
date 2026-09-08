@@ -129,3 +129,15 @@ apply_ymix_patch() {
   echo "[patch] applying ymix to src/ffmpeg"
   git -C "$SRC/ffmpeg" apply --verbose "$patch"
 }
+
+# H.264 VT must not Require hardware: simulator has none.
+apply_vt_allow_sw_patch() {
+  local patch="$ROOT/patches/0002-videotoolbox-allow-sw-h264.patch"
+  local vt="$SRC/ffmpeg/libavcodec/videotoolbox.c"
+  if grep -q "RequireHardwareAcceleratedVideoDecoder," "$vt" 2>/dev/null; then
+    echo "[patch] applying videotoolbox allow-sw H.264"
+    git -C "$SRC/ffmpeg" apply --verbose "$patch"
+  else
+    echo "[patch] videotoolbox allow-sw already applied"
+  fi
+}

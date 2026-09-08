@@ -49,6 +49,7 @@ FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,vp9_v
 FF_OPTS="$FF_OPTS $(video_sw_ff_opts)"
 
 apply_ymix_patch
+apply_vt_allow_sw_patch
 
 mkdir -p "$DEPS"
 fetch_video_srcs
