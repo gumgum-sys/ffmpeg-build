@@ -55,23 +55,26 @@ build_dav1d() {
   local bdir="$prefix/.build/dav1d"
   rm -rf "$bdir"
   mkdir -p "$bdir"
-  local c_args
-  c_args="$(python3 -c "import shlex,json,sys; print(json.dumps(shlex.split(sys.argv[1])))" "$cflags")"
   echo "[deps] dav1d $DAV1D_VER -> $prefix"
   if [ "${VIDEO_MESON_CROSS:-}" = 1 ]; then
-    cat > "$bdir/cross.ini" <<EOF
-[binaries]
-c = '${cc}'
-ar = '${ar}'
+    CC="$cc" AR="$ar" CFLAGS="$cflags" \
+      MESON_SYS="${VIDEO_MESON_SYSTEM:-darwin}" MESON_CPU="${VIDEO_MESON_CPU:-aarch64}" \
+      python3 - "$bdir/cross.ini" <<'PY'
+import os, shlex, sys
+args = ", ".join("'" + t.replace("'", "\\'") + "'" for t in shlex.split(os.environ["CFLAGS"]))
+open(sys.argv[1], "w").write(f"""[binaries]
+c = '{os.environ["CC"]}'
+ar = '{os.environ["AR"]}'
 [built-in options]
-c_args = ${c_args}
-c_link_args = ${c_args}
+c_args = [{args}]
+c_link_args = [{args}]
 [host_machine]
-system = '${VIDEO_MESON_SYSTEM:-darwin}'
-cpu_family = '${VIDEO_MESON_CPU:-aarch64}'
-cpu = '${VIDEO_MESON_CPU:-aarch64}'
+system = '{os.environ["MESON_SYS"]}'
+cpu_family = '{os.environ["MESON_CPU"]}'
+cpu = '{os.environ["MESON_CPU"]}'
 endian = 'little'
-EOF
+""")
+PY
     meson setup "$bdir" "$SRC/dav1d" \
       --prefix="$prefix" --libdir=lib --buildtype=release --default-library=static \
       -Denable_tools=false -Denable_tests=false -Denable_examples=false \
