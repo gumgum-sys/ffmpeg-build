@@ -8,6 +8,7 @@
 # mingw-w64, but a native runner can also RUN the result, which is the only way any of this gets
 # smoke-tested before publishing. Each macOS architecture is likewise built on its own runner.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
 
 OUT="${1:-}"
 # Resolved before anything cd's: the copy at the end runs from src/ffmpeg, so a relative path would
@@ -75,6 +76,18 @@ apply_ymix_patch
 
 [ -f "$DEPS/lib/libmp3lame.a" ] || { echo "[deps] lame";  build_dep "$SRC/lame/lame" lame --disable-frontend --disable-gtktest; }
 [ -f "$DEPS/lib/libshine.a" ]   || { echo "[deps] shine"; bootstrap_shine; build_dep "$SRC/shine" shine; fix_shine_pc "$DEPS"; }
+
+fetch_video_srcs
+HOST_CC_BIN="${CC:-$(command -v clang || command -v cc)}"
+HOST_AR_BIN="${AR:-$(command -v ar)}"
+build_dav1d "$DEPS" "$HOST_CC_BIN" "$DEP_CFLAGS" "$HOST_AR_BIN"
+build_libvpx "$DEPS" "$HOST_CC_BIN" "$DEP_CFLAGS" "$HOST_AR_BIN"
+FF_OPTS="$FF_OPTS --disable-autodetect --enable-zlib $(video_sw_ff_opts)"
+case "$(uname -s)" in
+  Darwin)
+    FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
+    ;;
+esac
 
 echo "[build] ffmpeg for $(uname -s)/$(uname -m)"
 cd "$SRC/ffmpeg"

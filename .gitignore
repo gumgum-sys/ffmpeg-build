@@ -1,6 +1,9 @@
 # Sources are submodules; build output never enters git — it goes to GitHub Releases.
 /.deps*
 /out/
+/.cache
+/src/dav1d
+/src/libvpx
 *.o
 *.a
 

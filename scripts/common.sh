@@ -15,6 +15,10 @@ JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 # Everything is disabled and then re-enabled by name. The point is a small binary: a stock ffmpeg
 # is ~70 MB, this is 6-8 MB. Adding a format here affects EVERY platform.
 #
+# Video SW (dav1d / libvpx) is NOT here: native `av1` is a hwaccel wrapper, native `vp9`
+# SIGILL/SIGSEGV. Each build-*.sh adds --enable-libdav1d / --enable-libvpx. Hardware is
+# MediaCodec (Android, in MSE C) or VideoToolbox (Apple, hwaccel plugins).
+#
 # Deliberately NOT enabled: --enable-gpl and --enable-nonfree. Both would change the licence of the
 # result (see NOTICE.md); the build stays LGPL-2.1+ so it can be shipped beside anything.
 FF_OPTS="

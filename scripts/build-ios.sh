@@ -7,6 +7,7 @@
 #
 # Run on an Apple Silicon Mac (the mini). Intel cannot produce simulator-arm64 well.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
 
 SDK="${1:?usage: build-ios.sh iphoneos|iphonesimulator}"
 case "$SDK" in
@@ -43,10 +44,17 @@ FF_OPTS="${FF_OPTS//--enable-libshine/}"
 FF_OPTS="${FF_OPTS//libmp3lame,/}"
 FF_OPTS="${FF_OPTS//,libshine/}"
 FF_OPTS="$FF_OPTS --disable-programs --disable-autodetect --enable-cross-compile --arch=aarch64 --cpu=generic --target-os=darwin --disable-runtime-cpudetect --disable-asm"
-# VT is the iOS video path (AV1/H.264). --disable-autodetect would otherwise drop it.
-FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-decoder=av1 --enable-hwaccel=h264_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
+# VT is the iOS HW path. dav1d/libvpx are SW fallback (sim has no AV1/VP9 HW).
+FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
+FF_OPTS="$FF_OPTS $(video_sw_ff_opts)"
 
 apply_ymix_patch
+
+mkdir -p "$DEPS"
+fetch_video_srcs
+VIDEO_MESON_CROSS=1 VIDEO_MESON_SYSTEM=darwin VIDEO_MESON_CPU=aarch64 \
+  build_dav1d "$DEPS" "$CC" "$DEP_CFLAGS" "$AR"
+build_libvpx "$DEPS" "$CC" "$DEP_CFLAGS" "$AR"
 
 rm -rf "$PREFIX"
 mkdir -p "$PREFIX"
@@ -68,6 +76,7 @@ make -j"$JOBS" libavcodec/libavcodec.a libavformat/libavformat.a libavutil/libav
 mkdir -p "$PREFIX/lib"
 cp libavcodec/libavcodec.a libavformat/libavformat.a libavutil/libavutil.a \
   libswscale/libswscale.a libswresample/libswresample.a "$PREFIX/lib/"
+cp -f "$DEPS/lib/libdav1d.a" "$DEPS/lib/libvpx.a" "$PREFIX/lib/"
 make install-headers
 
 rm -rf "$PREFIX/bin" "$PREFIX/share"

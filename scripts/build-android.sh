@@ -2,12 +2,15 @@
 #
 # Android, one ABI at a time so CI can fan the four out across parallel runners.
 #
-#   scripts/build-android.sh <abi> [output_path]      abi: arm64-v8a | armeabi-v7a | x86 | x86_64
+#   scripts/build-android.sh <abi> [cli_output_path]  abi: arm64-v8a | armeabi-v7a | x86 | x86_64
 #
-# Needs ANDROID_NDK_ROOT. The binary is named libffmpeg.so on purpose: Android only extracts and
-# grants exec permission to files under lib/<abi>/ that look like native libraries, so an executable
-# has to be disguised as one to be runnable from an installed app.
+# Needs ANDROID_NDK_ROOT. Always installs static libav + headers to
+#   $ROOT/out/android-<abi>/{include,lib}
+# for MSE to link. The CLI copy (optional second arg) is named libffmpeg.so on purpose: Android
+# only extracts and grants exec permission to files under lib/<abi>/ that look like native
+# libraries, so an executable has to be disguised as one to be runnable from an installed app.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
 
 ABI="${1:?usage: build-android.sh <abi> [out]}"
 OUT="${2:-}"
@@ -46,7 +49,9 @@ DEPS_REL="../../.deps-android-$ABI"
 # 16 KB page alignment: required by Android 15+ devices that use 16 KB pages, and harmless on the
 # 4 KB ones, so a single binary covers both.
 LDFLAGS_ALIGN="-Wl,-z,max-page-size=16384"
-DEP_CFLAGS="$DEP_STD $FF_OPTFLAGS $FF_SIZE_CFLAGS ${EXTRA_CFLAGS:-}"
+# -fPIC is required: MSE links these archives into a shared .so. ffmpeg itself is PIC via
+# --enable-pic; lame/shine are autotools and need the flag on CFLAGS plus --with-pic.
+DEP_CFLAGS="$DEP_STD $FF_OPTFLAGS $FF_SIZE_CFLAGS -fPIC ${EXTRA_CFLAGS:-}"
 
 build_dep() {
   local src="$1" name="$2"; shift 2
@@ -57,7 +62,7 @@ build_dep() {
   rm -rf "$bdir"; mkdir -p "$bdir"; cp -RL "$src/." "$bdir/"
   ( cd "$bdir"
     make distclean >/dev/null 2>&1 || true
-    ./configure --host="$TRIPLE" --prefix="$DEPS" --disable-shared --enable-static \
+    ./configure --host="$TRIPLE" --prefix="$DEPS" --disable-shared --enable-static --with-pic \
       CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="$DEP_CFLAGS" "$@" >/dev/null
     make -j"$JOBS" >/dev/null && make install >/dev/null )
 }
@@ -67,11 +72,23 @@ apply_ymix_patch
 [ -f "$DEPS/lib/libmp3lame.a" ] || { echo "[deps] lame";  build_dep "$SRC/lame/lame" lame --disable-frontend --disable-gtktest; }
 [ -f "$DEPS/lib/libshine.a" ]   || { echo "[deps] shine"; bootstrap_shine; build_dep "$SRC/shine" shine; fix_shine_pc "$DEPS"; }
 
+# MediaCodec is the Android video path. libvpx is SW fallback when MC will not take VP9.
+fetch_video_srcs
+build_libvpx "$DEPS" "$CC" "$DEP_CFLAGS" "$AR"
+FF_OPTS="$FF_OPTS --disable-autodetect $(video_vpx_only_ff_opts)"
+
+# Relative to src/ffmpeg so the recorded configure line has no /Users/... path.
+PREFIX="$ROOT/out/android-$ABI"
+PREFIX_REL="../../out/android-$ABI"
+rm -rf "$PREFIX"
+mkdir -p "$PREFIX"
+
 echo "[build] ffmpeg for android/$ABI (API $API)"
 cd "$SRC/ffmpeg"
 make distclean >/dev/null 2>&1 || true
 # shellcheck disable=SC2086
 PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig" ./configure \
+  --prefix="$PREFIX_REL" \
   --target-os=android --arch="$ARCH" --cpu="$CPU" --enable-cross-compile ${ASM_OPT:-} \
   --cc="$CC" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" --strip="$STRIP" \
   --enable-jni --enable-mediacodec \
@@ -80,12 +97,19 @@ PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig" ./configure \
   --extra-cflags="-I$DEPS_REL/include $FF_SIZE_CFLAGS ${EXTRA_CFLAGS:-}" \
   --extra-ldflags="-L$DEPS_REL/lib -Wl,--gc-sections $LDFLAGS_ALIGN" \
   $FF_OPTS
-make -j"$JOBS" ffmpeg
+make -j"$JOBS"
+make install
+
+# MSE links these too (ffmpeg itself is already statically linked against them).
+cp -f "$DEPS/lib/libmp3lame.a" "$DEPS/lib/libshine.a" "$PREFIX/lib/"
+[ -f "$DEPS/lib/libvpx.a" ] && cp -f "$DEPS/lib/libvpx.a" "$PREFIX/lib/"
 
 echo "[verify]"
 file ffmpeg
 assert_anonymous ffmpeg
 "$TC/bin/llvm-readelf" -l ffmpeg | grep -q "0x4000" && echo "  16 KB page aligned"
+ls "$PREFIX/lib"/libav*.a >/dev/null
+echo "  installed $PREFIX (libav + headers)"
 
 if [ -n "$OUT" ]; then
   cp ffmpeg "$OUT"
