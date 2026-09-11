@@ -40,8 +40,9 @@ ensure_meson() {
   command -v meson >/dev/null && command -v ninja >/dev/null && return 0
   if command -v brew >/dev/null; then
     echo "[deps] brew install meson ninja"
-    brew install meson ninja
-    return 0
+    # brew can exit 1 on a post-install warning after a successful formula pour.
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install meson ninja || true
+    command -v meson >/dev/null && command -v ninja >/dev/null && return 0
   fi
   echo "meson+ninja required to build dav1d" >&2
   return 1

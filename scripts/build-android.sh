@@ -2,15 +2,24 @@
 #
 # Android, one ABI at a time so CI can fan the four out across parallel runners.
 #
-#   scripts/build-android.sh <abi> [cli_output_path]  abi: arm64-v8a | armeabi-v7a | x86 | x86_64
+#   scripts/build-android.sh <abi> [pack_output_dir]  abi: arm64-v8a | armeabi-v7a | x86 | x86_64
 #
-# Needs ANDROID_NDK_ROOT. Always installs static libav + headers to
-#   $ROOT/out/android-<abi>/{include,lib}
-# for MSE to link. The CLI copy (optional second arg) is named libffmpeg.so on purpose: Android
-# only extracts and grants exec permission to files under lib/<abi>/ that look like native
-# libraries, so an executable has to be disguised as one to be runnable from an installed app.
+# Needs ANDROID_NDK_ROOT and patchelf (SONAME flatten: libavcodec.so.N → libavcodec.so;
+# Android only extracts filenames that end in ".so"). Always installs shared libav + headers to
+#   $ROOT/out/android-<abi>/{include,lib,bin,pack}
+# pack/ is the relocatable flat set (libffmpeg.so + the same unversioned libav*.so MSE loads).
+# The CLI is named libffmpeg.so on purpose: Android only extracts and grants exec permission to
+# files under lib/<abi>/ that look like native libraries.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
+
+# Shared libav: the CLI and MSE both load these DSOs.
+FF_OPTS="${FF_OPTS//$FF_LINK_STATIC/$FF_LINK_SHARED}"
+
+command -v patchelf >/dev/null || {
+  echo "FATAL: patchelf is required (Android SONAME flatten). brew install patchelf / apt install patchelf" >&2
+  exit 1
+}
 
 ABI="${1:?usage: build-android.sh <abi> [out]}"
 OUT="${2:-}"
@@ -49,8 +58,8 @@ DEPS_REL="../../.deps-android-$ABI"
 # 16 KB page alignment: required by Android 15+ devices that use 16 KB pages, and harmless on the
 # 4 KB ones, so a single binary covers both.
 LDFLAGS_ALIGN="-Wl,-z,max-page-size=16384"
-# -fPIC is required: MSE links these archives into a shared .so. ffmpeg itself is PIC via
-# --enable-pic; lame/shine are autotools and need the flag on CFLAGS plus --with-pic.
+# -fPIC is required: lame/shine/libvpx stay static inside libavcodec.so. ffmpeg itself is PIC
+# via --enable-pic; lame/shine are autotools and need the flag on CFLAGS plus --with-pic.
 DEP_CFLAGS="$DEP_STD $FF_OPTFLAGS $FF_SIZE_CFLAGS -fPIC ${EXTRA_CFLAGS:-}"
 
 build_dep() {
@@ -95,24 +104,31 @@ PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig" ./configure \
   --enable-pic \
   --optflags="$FF_OPTFLAGS" \
   --extra-cflags="-I$DEPS_REL/include $FF_SIZE_CFLAGS ${EXTRA_CFLAGS:-}" \
-  --extra-ldflags="-L$DEPS_REL/lib -Wl,--gc-sections $LDFLAGS_ALIGN" \
+  --extra-ldflags="-L$DEPS_REL/lib -Wl,--gc-sections $LDFLAGS_ALIGN -Wl,-rpath,\$ORIGIN" \
   $FF_OPTS
 make -j"$JOBS"
 make install
 
-# MSE links these too (ffmpeg itself is already statically linked against them).
-cp -f "$DEPS/lib/libmp3lame.a" "$DEPS/lib/libshine.a" "$PREFIX/lib/"
-[ -f "$DEPS/lib/libvpx.a" ] && cp -f "$DEPS/lib/libvpx.a" "$PREFIX/lib/"
+# Case-insensitive; NDK + our unversioned libav/libsw. MediaCodec pulls libmediandk/libandroid.
+ALLOWED_DEPS='^(libc|libm|libdl|liblog|libz|libandroid|libmediandk|libjnigraphics|libaaudio|libEGL|libOpenSLES|ld-android|libc\+\+|libstdc\+\+|libav|libsw)'
+
+PACK="$PREFIX/pack"
+pack_ffmpeg_shared "$PACK" "$PREFIX" "libffmpeg.so" "$ALLOWED_DEPS"
+# MSE CMake links $PREFIX/lib. Replace versioned SONAMEs with the flattened copies the apk ships
+# so DT_NEEDED is libavcodec.so, not libavcodec.so.61.
+rm -f "$PREFIX/lib"/libav*.so.* "$PREFIX/lib"/libsw*.so.*
+cp -a "$PACK"/libav*.so "$PACK"/libsw*.so "$PREFIX/lib/"
 
 echo "[verify]"
-file ffmpeg
-assert_anonymous ffmpeg
-"$TC/bin/llvm-readelf" -l ffmpeg | grep -q "0x4000" && echo "  16 KB page aligned"
-ls "$PREFIX/lib"/libav*.a >/dev/null
-echo "  installed $PREFIX (libav + headers)"
+file "$PACK/libffmpeg.so"
+assert_anonymous "$PACK/libffmpeg.so"
+"$TC/bin/llvm-readelf" -l "$PACK/libffmpeg.so" | grep -q "0x4000" && echo "  16 KB page aligned"
+ls "$PACK"/libavcodec.so >/dev/null
+echo "  installed $PREFIX (shared libav + headers); pack/ is the relocatable CLI+DSOs"
 
 if [ -n "$OUT" ]; then
-  cp ffmpeg "$OUT"
-  echo "[out] $OUT ($(du -h "$OUT" | cut -f1))"
+  mkdir -p "$OUT"
+  cp -a "$PACK"/. "$OUT/"
+  echo "[out] $OUT ($(du -sh "$OUT" | cut -f1))"
 fi
 echo "[android/$ABI] BUILD_OK"

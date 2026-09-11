@@ -10,6 +10,9 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
 
+# Shared libav: the CLI and MSE both load these DSOs. iOS stays static (common.sh default).
+FF_OPTS="${FF_OPTS//$FF_LINK_STATIC/$FF_LINK_SHARED}"
+
 OUT="${1:-}"
 # Resolved before anything cd's: the copy at the end runs from src/ffmpeg, so a relative path would
 # deposit the binary inside the source tree instead of where the caller asked for it.
@@ -25,27 +28,30 @@ case "$(uname -s)" in
     # to launch on anything older (a Sonoma host produced binaries demanding macOS 14).
     MIN_OS="-mmacosx-version-min=11.0"
     LD_STRIP="-Wl,-dead_strip"          # ld64's spelling of --gc-sections
-    ALLOWED_DEPS='^(/usr/lib/|/System/)'
+    ALLOWED_DEPS='^(/usr/lib/|/System/|@rpath/)'
+    RPATH_LDFLAGS="-Wl,-rpath,@loader_path -Wl,-headerpad_max_install_names"
     ;;
   Linux)
     MIN_OS=""
     LD_STRIP="-Wl,--gc-sections"
-    ALLOWED_DEPS='^(libc|libm|libdl|libpthread|librt|libz|libbz2|ld-linux)'
+    ALLOWED_DEPS='^(libc|libm|libdl|libpthread|librt|libz|libbz2|ld-linux|libav|libsw)'
+    RPATH_LDFLAGS='-Wl,-rpath,\$ORIGIN'
     ;;
   # uname -s names the MSYS2 environment: MINGW64 on x86_64, CLANGARM64 on arm64.
   MINGW*|MSYS*|CLANG*|UCRT*)
     WINDOWS=1
     MIN_OS=""
     LD_STRIP="-Wl,--gc-sections"
-    # Without -static the .exe needs the toolchain runtime DLLs beside it (libwinpthread-1,
-    # libgcc_s_seh-1 under MINGW64; libunwind under CLANGARM64).
-    EXTRA_LDFLAGS="-static"
+    # Shared libav DLLs sit next to ffmpeg.exe (Windows loads from the exe directory). Do not
+    # -static: that would bake libav into the exe and MSE could not share it. Still bake the
+    # mingw runtime so we do not ship libgcc/libwinpthread beside the exe.
     # ffmpeg derives the OS from `uname -s`, which here names the MSYS2 environment. Only the
     # mingw* spellings are recognised, so CLANGARM64 would be configured as an unknown Unix.
     # (The arch needs no help: configure reads $MSYSTEM_CARCH.)
+    EXTRA_LDFLAGS="-static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic"
     EXTRA_CONF="--target-os=mingw64 --host-os=mingw64"
-    # Case-insensitively matched; these are the DLLs a stock Windows already has.
-    ALLOWED_DEPS='^(kernel32|user32|advapi32|ws2_32|shell32|ole32|oleaut32|secur32|bcrypt|ncrypt|crypt32|gdi32|imm32|version|psapi|iphlpapi|winmm|shlwapi|msvcrt|ucrtbase|api-ms-)'
+    # Case-insensitively matched; OS DLLs plus our libav/libsw.
+    ALLOWED_DEPS='^(kernel32|user32|advapi32|ws2_32|shell32|ole32|oleaut32|secur32|bcrypt|ncrypt|crypt32|gdi32|imm32|version|psapi|iphlpapi|winmm|shlwapi|msvcrt|ucrtbase|api-ms-|avcodec|avformat|avutil|avfilter|avdevice|swscale|swresample)'
     # ymix talks over a Unix socket to reach Android's content:// documents. Windows has no such
     # restriction and no <sys/un.h>, so the protocol comes out for this target only.
     FF_OPTS="${FF_OPTS//--enable-protocol=file,pipe,ymix/--enable-protocol=file,pipe}"
@@ -89,31 +95,58 @@ case "$(uname -s)" in
     ;;
 esac
 
-echo "[build] ffmpeg for $(uname -s)/$(uname -m)"
+# Install prefix: include/ + lib/ (shared libav) + bin/ffmpeg. pack/ is the relocatable flat
+# set YMusic ships (CLI + the same DSOs MSE loads).
+ARCH_SLUG="$(uname -m)"
+case "$ARCH_SLUG" in arm64|aarch64) ARCH_SLUG=arm64 ;; x86_64|amd64) ARCH_SLUG=x86_64 ;; esac
+case "$(uname -s)" in
+  Darwin) SLUG="macos-$ARCH_SLUG" ;;
+  Linux) SLUG="linux-$ARCH_SLUG" ;;
+  *) SLUG="windows-$ARCH_SLUG" ;;
+esac
+PREFIX="$ROOT/out/$SLUG"
+PREFIX_REL="../../out/$SLUG"
+rm -rf "$PREFIX"
+mkdir -p "$PREFIX"
+
+echo "[build] ffmpeg for $(uname -s)/$(uname -m) (shared libav)"
 cd "$SRC/ffmpeg"
 make distclean >/dev/null 2>&1 || true
 # shellcheck disable=SC2086
 PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" ./configure \
+  --prefix="$PREFIX_REL" \
   --optflags="$FF_OPTFLAGS" \
   ${HOST_CC:+--cc="$HOST_CC"} \
   --extra-cflags="-I$DEPS_REL/include $FF_SIZE_CFLAGS $MIN_OS" \
-  --extra-ldflags="-L$DEPS_REL/lib $LD_STRIP $MIN_OS ${EXTRA_LDFLAGS:-}" \
+  --extra-ldflags="-L$DEPS_REL/lib $LD_STRIP $MIN_OS ${RPATH_LDFLAGS:-} ${EXTRA_LDFLAGS:-}" \
   ${EXTRA_CONF:-} \
   $FF_OPTS
-make -j"$JOBS" "$BIN"
+make -j"$JOBS"
+make install
+
+PACK="$PREFIX/pack"
+pack_ffmpeg_shared "$PACK" "$PREFIX" "$BIN" "$ALLOWED_DEPS"
+# MSE CMake links $PREFIX/lib. Overwrite with the relocatable copies so JNI records
+# @rpath / $ORIGIN install names, not the build-machine prefix.
+cp -a "$PACK"/libav* "$PACK"/libsw* "$PREFIX/lib/" 2>/dev/null || true
+if [ -n "${WINDOWS:-}" ]; then
+  cp -a "$PACK"/av*.dll "$PACK"/sw*.dll "$PREFIX/bin/" 2>/dev/null || true
+fi
 
 echo "[verify]"
-file "$BIN"
-assert_no_stray_deps "$BIN" "$ALLOWED_DEPS"
-assert_anonymous "$BIN"
+file "$PACK/$BIN"
+assert_anonymous "$PACK/$BIN"
 # Native on every platform now, so the binary is always executed before it is published.
-"./$BIN" -hide_banner -muxers | grep -qw wav && echo "  runs; wav muxer present"
+"$PACK/$BIN" -hide_banner -muxers | grep -qw wav && echo "  runs; wav muxer present"
 if [ -z "${WINDOWS:-}" ]; then  # ymix is not built for Windows
-  "./$BIN" -hide_banner -protocols | tr -d ' ' | grep -qw ymix && echo "  ymix protocol present"
+  "$PACK/$BIN" -hide_banner -protocols | tr -d ' ' | grep -qw ymix && echo "  ymix protocol present"
+  # rpath must be enough: KmpProcess starts the child with an empty env (no LD_LIBRARY_PATH).
+  env -i "$PACK/$BIN" -hide_banner -version >/dev/null && echo "  runs with empty env (rpath, not LD_LIBRARY_PATH)"
 fi
 
 if [ -n "$OUT" ]; then
-  cp "$BIN" "$OUT"
-  echo "[out] $OUT ($(du -h "$OUT" | cut -f1))"
+  mkdir -p "$OUT"
+  cp -a "$PACK"/. "$OUT/"
+  echo "[out] $OUT ($(du -sh "$OUT" | cut -f1))"
 fi
 echo "[desktop] BUILD_OK"

@@ -21,8 +21,12 @@ JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 #
 # Deliberately NOT enabled: --enable-gpl and --enable-nonfree. Both would change the licence of the
 # result (see NOTICE.md); the build stays LGPL-2.1+ so it can be shipped beside anything.
+# Linkage: desktop + Android substitute FF_LINK_SHARED so the ffmpeg CLI and MSE load the same
+# libav DSOs. iOS keeps static (no CLI, no dylibs in the app).
+FF_LINK_STATIC="--disable-shared --enable-static"
+FF_LINK_SHARED="--disable-static --enable-shared --enable-pic"
 FF_OPTS="
---disable-shared --enable-static
+$FF_LINK_STATIC
 --enable-ffmpeg --disable-ffplay --disable-ffprobe
 --disable-encoders --disable-decoders --disable-muxers --disable-demuxers
 --disable-protocols --disable-bsfs --disable-devices --disable-filters
@@ -108,6 +112,119 @@ fix_shine_pc() {
   local pc="$1/lib/pkgconfig/shine.pc"
   [ -f "$pc" ] || return 0
   sed 's/-lm -lshine/-lshine -lm/' "$pc" > "$pc.tmp" && mv "$pc.tmp" "$pc"
+}
+
+# Copy the ffmpeg CLI and its libav/libsw DSOs into a flat [pack] dir and rewrite install names
+# so the set is relocatable ($ORIGIN / @loader_path). LAME/shine/dav1d/libvpx stay inside libav.
+# $4 optional: ALLOWED_DEPS regex, applied to the CLI and every packed DSO.
+pack_ffmpeg_shared() {
+  local pack="$1" prefix="$2" binname="$3" allowed="${4:-}"
+  rm -rf "$pack"
+  mkdir -p "$pack"
+  local srcbin=""
+  if [ -f "$prefix/bin/ffmpeg.exe" ]; then
+    srcbin="$prefix/bin/ffmpeg.exe"
+  elif [ -f "$prefix/bin/ffmpeg" ]; then
+    srcbin="$prefix/bin/ffmpeg"
+  else
+    echo "FATAL: no ffmpeg in $prefix/bin" >&2
+    return 1
+  fi
+  cp "$srcbin" "$pack/$binname"
+  chmod +x "$pack/$binname"
+  # Versioned SONAMEs + unversioned symlinks; Windows DLLs live in bin/ after make install.
+  local f
+  for f in "$prefix/lib"/libav* "$prefix/lib"/libsw* "$prefix/bin"/av*.dll "$prefix/bin"/sw*.dll \
+           "$prefix/lib"/av*.dll "$prefix/lib"/sw*.dll; do
+    [ -e "$f" ] || continue
+    case "$f" in *.a|*.pc|*.la) continue ;; esac
+    cp -a "$f" "$pack/"
+  done
+  relocatable_pack "$pack" "$binname"
+  if [ "$binname" = "libffmpeg.so" ]; then
+    flatten_elf_sonames_unversioned "$pack"
+  fi
+  if [ -n "$allowed" ]; then
+    assert_no_stray_deps "$pack/$binname" "$allowed"
+    for f in "$pack"/libav* "$pack"/libsw* "$pack"/av*.dll "$pack"/sw*.dll; do
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      case "$f" in *.a|*.pc|*.la) continue ;; esac
+      assert_no_stray_deps "$f" "$allowed"
+    done
+  fi
+}
+
+# Make [pack]/[binname] and sibling libav/libsw DSOs look next to each other at runtime.
+relocatable_pack() {
+  local pack="$1" binname="$2"
+  local bin="$pack/$binname"
+  case "$(uname -s)" in
+    Darwin)
+      local lib dep depbase
+      for lib in "$pack"/libav*.dylib "$pack"/libsw*.dylib; do
+        [ -f "$lib" ] || continue
+        [ -L "$lib" ] && continue
+        install_name_tool -id "@rpath/$(basename "$lib")" "$lib"
+        otool -L "$lib" | awk '/libav|libsw/{print $1}' | while read -r dep; do
+          depbase="$(basename "$dep")"
+          [ -e "$pack/$depbase" ] || continue
+          install_name_tool -change "$dep" "@rpath/$depbase" "$lib"
+        done
+        install_name_tool -add_rpath "@loader_path" "$lib" 2>/dev/null || true
+      done
+      otool -L "$bin" | awk '/libav|libsw/{print $1}' | while read -r dep; do
+        depbase="$(basename "$dep")"
+        [ -e "$pack/$depbase" ] || continue
+        install_name_tool -change "$dep" "@rpath/$depbase" "$bin"
+      done
+      install_name_tool -add_rpath "@loader_path" "$bin" 2>/dev/null || true
+      ;;
+    Linux|MINGW*|MSYS*|CLANG*|UCRT*)
+      # Linked with -rpath $ORIGIN (see build-*.sh). Windows loads DLLs from the exe directory.
+      if command -v patchelf >/dev/null; then
+        local so
+        for so in "$pack"/libav*.so* "$pack"/libsw*.so* "$bin"; do
+          [ -f "$so" ] && [ ! -L "$so" ] || continue
+          patchelf --set-rpath '$ORIGIN' "$so"
+        done
+      fi
+      ;;
+  esac
+}
+
+# Android's installer only extracts filenames that end in ".so" (not libavcodec.so.61).
+# Rewrite SONAME + DT_NEEDED to the unversioned name and keep only that file. Needs patchelf.
+flatten_elf_sonames_unversioned() {
+  local pack="$1"
+  command -v patchelf >/dev/null || {
+    echo "FATAL: patchelf is required to flatten Android SONAMEs (libfoo.so.N → libfoo.so)" >&2
+    return 1
+  }
+  local f base unversioned needed
+  for f in "$pack"/libav*.so.* "$pack"/libsw*.so.*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    base="$(basename "$f")"
+    unversioned="${base%%.so.*}.so"
+    cp -f "$f" "$pack/$unversioned"
+    patchelf --set-soname "$unversioned" "$pack/$unversioned"
+  done
+  for f in "$pack"/libav*.so.* "$pack"/libsw*.so.*; do
+    [ -e "$f" ] || continue
+    rm -f "$f"
+  done
+  for f in "$pack"/*.so; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    # Capture NEEDED first: replacing while reading the pipe is fine (patchelf rewrites in place).
+    patchelf --print-needed "$f" | while read -r needed; do
+      case "$needed" in
+        libav*.so.*|libsw*.so.*)
+          unversioned="${needed%%.so.*}.so"
+          patchelf --replace-needed "$needed" "$unversioned" "$f"
+          ;;
+      esac
+    done
+    patchelf --set-rpath '$ORIGIN' "$f"
+  done
 }
 
 # shine ships no configure; bootstrap needs autoreconf and libtoolize. Failing loudly here beats

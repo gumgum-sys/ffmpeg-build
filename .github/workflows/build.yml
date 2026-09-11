@@ -35,7 +35,7 @@ jobs:
 
       - name: Install build tools (Linux)
         if: startsWith(matrix.runner, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y nasm ccache automake autoconf libtool pkg-config
+        run: sudo apt-get update && sudo apt-get install -y nasm ccache automake autoconf libtool pkg-config patchelf
 
       - name: Cache ccache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -56,7 +56,7 @@ jobs:
         env:
           # ffmpeg's configure ignores $CC (cc_default is hardcoded), so ccache goes through --cc.
           HOST_CC: ccache cc
-        run: scripts/build-desktop.sh out/${{ matrix.name }}/${{ matrix.out }}
+        run: scripts/build-desktop.sh
 
       - run: ccache --show-stats | head -5
 
@@ -64,7 +64,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.name }}
-          path: out/${{ matrix.name }}/${{ matrix.out }}
+          path: out/${{ matrix.name }}/pack
 
   windows:
     name: ${{ matrix.name }}
@@ -112,12 +112,12 @@ jobs:
       - name: Build
         env:
           HOST_CC: ccache ${{ matrix.cc }}
-        run: scripts/build-desktop.sh out/${{ matrix.name }}/ffmpeg.exe
+        run: scripts/build-desktop.sh
       - run: ccache --show-stats | head -5
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.name }}
-          path: out/${{ matrix.name }}/ffmpeg.exe
+          path: out/${{ matrix.name }}/pack
 
   android:
     name: android-${{ matrix.abi }}
@@ -135,20 +135,20 @@ jobs:
         id: ndk
         with:
           ndk-version: r27c
-      - run: sudo apt-get update && sudo apt-get install -y nasm automake autoconf libtool pkg-config
+      - run: sudo apt-get update && sudo apt-get install -y nasm automake autoconf libtool pkg-config patchelf
       # No ccache: build-android.sh sets CC to an NDK binary itself.
       - name: Cache built dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .deps-android-${{ matrix.abi }}
           key: deps-android-${{ matrix.abi }}-${{ hashFiles('.gitmodules', 'scripts/common.sh') }}
-      - run: scripts/build-android.sh ${{ matrix.abi }} out/android-${{ matrix.abi }}/libffmpeg.so
+      - run: scripts/build-android.sh ${{ matrix.abi }}
         env:
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-${{ matrix.abi }}
-          path: out/android-${{ matrix.abi }}/libffmpeg.so
+          path: out/android-${{ matrix.abi }}/pack
 
   release:
     # Signing secrets live on this environment; add required reviewers to gate releases.
@@ -164,15 +164,13 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect and name the binaries
+      - name: Collect and name the packs
         run: |
           set -euo pipefail
           mkdir -p release
           for d in artifacts/*/; do
             name="$(basename "$d")"
-            src="$(find "$d" -type f | head -1)"
-            ext=""; case "$src" in *.exe) ext=".exe";; *.so) ext=".so";; esac
-            cp "$src" "release/ffmpeg-$name$ext"
+            tar -C "$d" -czf "release/ffmpeg-$name.tar.gz" .
           done
           ls -l release
 
@@ -230,12 +228,19 @@ jobs:
           fi
           echo "signing as: $IDENTITY"
 
-          for b in release/ffmpeg-macos-*; do
-            # --timestamp keeps the signature valid after the certificate expires.
-            codesign --force --options runtime --timestamp --sign "$IDENTITY" "$b"
-            codesign --verify --strict "$b"
-            codesign --verify -R="anchor apple generic" "$b"
-            echo "  signed $b"
+          for tar in release/ffmpeg-macos-*.tar.gz; do
+            tmp="$RUNNER_TEMP/sign-$(basename "$tar" .tar.gz)"
+            rm -rf "$tmp"; mkdir -p "$tmp"
+            tar -C "$tmp" -xzf "$tar"
+            # Sign every Mach-O (CLI + libav dylibs); hardened runtime + timestamp.
+            find "$tmp" -type f | while read -r b; do
+              file "$b" | grep -q 'Mach-O' || continue
+              codesign --force --options runtime --timestamp --sign "$IDENTITY" "$b"
+              codesign --verify --strict "$b"
+              echo "  signed $b"
+            done
+            tar -C "$tmp" -czf "$tar" .
+            echo "  packed $tar"
           done
 
       - name: Discard the signing keychain
