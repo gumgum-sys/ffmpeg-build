@@ -119,10 +119,15 @@ build_libvpx() {
 }
 
 # ffmpeg configure extras once dav1d+vpx are in $DEPS.
+#
+# --enable-decoder=NAME matches NAME_decoder against the component list, which
+# uses underscores (libvpx_vp9_decoder). A hyphen (libvpx-vp9) matches nothing:
+# libvpx is linked, native `vp9` still arrives via vp9_videotoolbox, and MSE
+# then logs `no decoder id=166` because it will not open native `vp9`.
 video_sw_ff_opts() {
-  echo "--enable-libdav1d --enable-libvpx --enable-decoder=libdav1d,libvpx-vp9,av1"
+  echo "--enable-libdav1d --enable-libvpx --enable-decoder=libdav1d,libvpx_vp9,av1"
 }
 
 video_vpx_only_ff_opts() {
-  echo "--enable-libvpx --enable-decoder=libvpx-vp9"
+  echo "--enable-libvpx --enable-decoder=libvpx_vp9"
 }

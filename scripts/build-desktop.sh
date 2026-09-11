@@ -138,6 +138,13 @@ file "$PACK/$BIN"
 assert_anonymous "$PACK/$BIN"
 # Native on every platform now, so the binary is always executed before it is published.
 "$PACK/$BIN" -hide_banner -muxers | grep -qw wav && echo "  runs; wav muxer present"
+# Hyphen here is the -decoders name. CONFIG_LIBVPX=yes is not enough: a mistyped
+# --enable-decoder=libvpx-vp9 used to ship native `vp9` only (YouTube 0 fps).
+"$PACK/$BIN" -hide_banner -decoders 2>/dev/null | grep -q 'libvpx-vp9' \
+  || { echo "FATAL: libvpx-vp9 decoder missing from $PACK/$BIN" >&2; exit 1; }
+"$PACK/$BIN" -hide_banner -decoders 2>/dev/null | grep -q 'libdav1d' \
+  || { echo "FATAL: libdav1d decoder missing from $PACK/$BIN" >&2; exit 1; }
+echo "  libvpx-vp9 and libdav1d decoders present"
 if [ -z "${WINDOWS:-}" ]; then  # ymix is not built for Windows
   "$PACK/$BIN" -hide_banner -protocols | tr -d ' ' | grep -qw ymix && echo "  ymix protocol present"
   # rpath must be enough: KmpProcess starts the child with an empty env (no LD_LIBRARY_PATH).
