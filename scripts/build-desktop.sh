@@ -91,7 +91,7 @@ build_libvpx "$DEPS" "$HOST_CC_BIN" "$DEP_CFLAGS" "$HOST_AR_BIN"
 FF_OPTS="$FF_OPTS --disable-autodetect --enable-zlib $(video_sw_ff_opts)"
 case "$(uname -s)" in
   Darwin)
-    FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
+    FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
     ;;
 esac
 
