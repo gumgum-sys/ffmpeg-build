@@ -86,8 +86,24 @@ apply_ymix_patch
 fetch_video_srcs
 HOST_CC_BIN="${CC:-$(command -v clang || command -v cc)}"
 HOST_AR_BIN="${AR:-$(command -v ar)}"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-x86_64) LIBVPX_TARGET=x86_64-darwin20-gcc ;;
+  Darwin-arm64) LIBVPX_TARGET=arm64-darwin20-gcc ;;
+  Linux-x86_64) LIBVPX_TARGET=x86_64-linux-gcc ;;
+  Linux-aarch64|Linux-arm64) LIBVPX_TARGET=arm64-linux-gcc ;;
+  *) LIBVPX_TARGET=generic-gnu ;;
+esac
+export LIBVPX_TARGET
 build_dav1d "$DEPS" "$HOST_CC_BIN" "$DEP_CFLAGS" "$HOST_AR_BIN"
 build_libvpx "$DEPS" "$HOST_CC_BIN" "$DEP_CFLAGS" "$HOST_AR_BIN"
+if [ "$(uname -m)" = x86_64 ]; then
+  # grep -q + pipefail dies on nm's SIGPIPE; size is the portable SIMD check
+  # (generic-gnu decode-only is ~400 KB).
+  vpx_n=$(wc -c < "$DEPS/lib/libvpx.a")
+  [ "$vpx_n" -gt 600000 ] \
+    || { echo "FATAL: libvpx is ${vpx_n} bytes (generic-gnu, no SIMD)" >&2; exit 1; }
+  echo "[deps] libvpx SIMD present ($vpx_n bytes)"
+fi
 FF_OPTS="$FF_OPTS --disable-autodetect --enable-zlib $(video_sw_ff_opts)"
 case "$(uname -s)" in
   Darwin)

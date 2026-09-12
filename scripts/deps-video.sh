@@ -92,26 +92,33 @@ PY
   meson install -C "$bdir"
 }
 
+# Cross (iOS/Android): generic-gnu, no asm. Desktop: LIBVPX_TARGET=x86_64-darwin20-gcc
+# (etc.) so 4K VP9 hits AVX; generic-gnu is ~15 fps on Intel (log29 vs log30 Homebrew).
 build_libvpx() {
   local prefix="$1" cc="$2" cflags="$3" ar="$4"
+  local target="${LIBVPX_TARGET:-generic-gnu}"
   [ -f "$prefix/lib/libvpx.a" ] && return 0
   local bdir="$prefix/.build/libvpx"
   rm -rf "$bdir"
   mkdir -p "$bdir"
-  echo "[deps] libvpx $LIBVPX_VER -> $prefix"
+  echo "[deps] libvpx $LIBVPX_VER target=$target -> $prefix"
+  local cpu_detect="--disable-runtime-cpu-detect"
+  if [ "$target" != "generic-gnu" ]; then
+    cpu_detect=""
+  fi
   (
     cd "$bdir"
-    # generic-gnu + clang flags: no hand-written asm, PIC, decode-only.
+    # shellcheck disable=SC2086
     CC="$cc" CXX="$cc" AR="$ar" RANLIB="${RANLIB:-ranlib}" \
-      CFLAGS="$cflags" CXXFLAGS="$cflags" LDFLAGS="$cflags" \
+      AS="${AS:-nasm}" CFLAGS="$cflags" CXXFLAGS="$cflags" LDFLAGS="$cflags" \
       "$SRC/libvpx/configure" \
         --prefix="$prefix" --libdir="$prefix/lib" \
-        --target=generic-gnu \
+        --target="$target" \
         --disable-examples --disable-tools --disable-docs --disable-unit-tests \
         --enable-static --disable-shared --enable-pic \
         --enable-vp8 --enable-vp9 \
         --disable-vp8-encoder --disable-vp9-encoder \
-        --disable-runtime-cpu-detect \
+        $cpu_detect \
         --extra-cflags="$cflags"
     make -j"$JOBS"
     make install
