@@ -58,6 +58,9 @@ DEPS_REL="../../.deps-android-$ABI"
 # 16 KB page alignment: required by Android 15+ devices that use 16 KB pages, and harmless on the
 # 4 KB ones, so a single binary covers both.
 LDFLAGS_ALIGN="-Wl,-z,max-page-size=16384"
+# Single-quoted so ffmpeg's configure test does not expand $ORIGIN to empty (ld then
+# drops `main`). pack_ffmpeg_shared also sets rpath via patchelf.
+RPATH_LDFLAGS='-Wl,-rpath,\$ORIGIN'
 # -fPIC is required: lame/shine/libvpx stay static inside libavcodec.so. ffmpeg itself is PIC
 # via --enable-pic; lame/shine are autotools and need the flag on CFLAGS plus --with-pic.
 DEP_CFLAGS="$DEP_STD $FF_OPTFLAGS $FF_SIZE_CFLAGS -fPIC ${EXTRA_CFLAGS:-}"
@@ -104,7 +107,7 @@ PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig" ./configure \
   --enable-pic \
   --optflags="$FF_OPTFLAGS" \
   --extra-cflags="-I$DEPS_REL/include $FF_SIZE_CFLAGS ${EXTRA_CFLAGS:-}" \
-  --extra-ldflags="-L$DEPS_REL/lib -Wl,--gc-sections $LDFLAGS_ALIGN -Wl,-rpath,\$ORIGIN" \
+  --extra-ldflags="-L$DEPS_REL/lib -Wl,--gc-sections $LDFLAGS_ALIGN $RPATH_LDFLAGS" \
   $FF_OPTS
 make -j"$JOBS"
 make install

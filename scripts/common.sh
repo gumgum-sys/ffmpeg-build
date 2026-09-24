@@ -65,17 +65,26 @@ DEP_STD="-std=gnu17"
 # build; the allowed patterns differ per platform, so each caller passes its own.
 assert_no_stray_deps() {
   local binary="$1" allowed="$2" listing="" od
-  case "$(uname -s)" in
-    Darwin) listing="$(otool -L "$binary" | tail -n +2 | awk '{print $1}')" ;;
-    # ELF prints "NEEDED  libfoo.so"; PE prints "DLL Name: FOO.dll" — different field.
-    # llvm-objdump is the fallback for CLANGARM64, which ships no GNU binutils, and whose
-    # aarch64 PE output the MSYS2 binutils objdump cannot read either.
-    *) for od in objdump llvm-objdump; do
-         command -v "$od" >/dev/null || continue
-         listing="$("$od" -p "$binary" 2>/dev/null | awk '/NEEDED/ {print $2} /DLL Name:/ {print $3}')"
-         if [ -n "$listing" ]; then break; fi
-       done ;;
-  esac
+  # Prefer ELF readers first: Android packs are built on macOS, where otool cannot
+  # parse NEEDED.
+  for od in llvm-readelf readelf; do
+    command -v "$od" >/dev/null || continue
+    listing="$("$od" -d "$binary" 2>/dev/null | awk '/NEEDED/ {print $NF}' | tr -d '[]')"
+    if [ -n "$listing" ]; then break; fi
+  done
+  if [ -z "$listing" ]; then
+    case "$(uname -s)" in
+      Darwin) listing="$(otool -L "$binary" | tail -n +2 | awk '{print $1}')" ;;
+      # ELF prints "NEEDED  libfoo.so"; PE prints "DLL Name: FOO.dll" — different field.
+      # llvm-objdump is the fallback for CLANGARM64, which ships no GNU binutils, and whose
+      # aarch64 PE output the MSYS2 binutils objdump cannot read either.
+      *) for od in objdump llvm-objdump; do
+           command -v "$od" >/dev/null || continue
+           listing="$("$od" -p "$binary" 2>/dev/null | awk '/NEEDED/ {print $2} /DLL Name:/ {print $3}')"
+           if [ -n "$listing" ]; then break; fi
+         done ;;
+    esac
+  fi
   # An unreadable import table would otherwise pass the check below with an empty list.
   [ -n "$listing" ] || { echo "FATAL: cannot read the imports of $binary" >&2; return 1; }
   local stray
