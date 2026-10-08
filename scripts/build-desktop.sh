@@ -109,6 +109,10 @@ case "$(uname -s)" in
   Darwin)
     FF_OPTS="$FF_OPTS --enable-videotoolbox --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,vp9_videotoolbox,av1_videotoolbox"
     ;;
+  Linux)
+    install_hw_headers "$DEPS"
+    FF_OPTS="$FF_OPTS $(video_hw_linux_ff_opts)"
+    ;;
 esac
 
 # Install prefix: include/ + lib/ (shared libav) + bin/ffmpeg. pack/ is the relocatable flat
@@ -161,6 +165,13 @@ assert_anonymous "$PACK/$BIN"
 "$PACK/$BIN" -hide_banner -decoders 2>/dev/null | grep -q 'libdav1d' \
   || { echo "FATAL: libdav1d decoder missing from $PACK/$BIN" >&2; exit 1; }
 echo "  libvpx-vp9 and libdav1d decoders present"
+if [ "$(uname -s)" = Linux ]; then
+  for hw in cuda vulkan; do
+    "$PACK/$BIN" -hide_banner -hwaccels 2>/dev/null | grep -qx "$hw" \
+      || { echo "FATAL: $hw hwaccel missing from $PACK/$BIN" >&2; exit 1; }
+  done
+  echo "  cuda (nvdec) and vulkan hwaccels present"
+fi
 if [ -z "${WINDOWS:-}" ]; then  # ymix is not built for Windows
   "$PACK/$BIN" -hide_banner -protocols | tr -d ' ' | grep -qw ymix && echo "  ymix protocol present"
   # rpath must be enough: KmpProcess starts the child with an empty env (no LD_LIBRARY_PATH).

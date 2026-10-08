@@ -13,6 +13,11 @@ DAV1D_VER="${DAV1D_VER:-1.5.1}"
 LIBVPX_VER="${LIBVPX_VER:-1.15.2}"
 DAV1D_URL="https://github.com/videolan/dav1d/archive/refs/tags/${DAV1D_VER}.tar.gz"
 LIBVPX_URL="https://github.com/webmproject/libvpx/archive/refs/tags/v${LIBVPX_VER}.tar.gz"
+# Header-only (MIT): the drivers behind them are dlopen'd at runtime, so no link dependency.
+NVCODEC_VER="${NVCODEC_VER:-n13.0.19.0}"
+VKHEADERS_VER="${VKHEADERS_VER:-1.4.317}"
+NVCODEC_URL="https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/${NVCODEC_VER}.tar.gz"
+VKHEADERS_URL="https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v${VKHEADERS_VER}.tar.gz"
 
 fetch_tarball() {
   local url="$1" dest="$2" stamp="$3"
@@ -131,6 +136,24 @@ build_libvpx() {
 # uses underscores (libvpx_vp9_decoder). A hyphen (libvpx-vp9) matches nothing:
 # libvpx is linked, native `vp9` still arrives via vp9_videotoolbox, and MSE
 # then logs `no decoder id=166` because it will not open native `vp9`.
+# ffnvcodec (NVDEC) + Vulkan headers into $prefix. Linux desktop hardware decode.
+install_hw_headers() {
+  local prefix="$1"
+  fetch_tarball "$NVCODEC_URL" "$SRC/nv-codec-headers" ".ver-$NVCODEC_VER"
+  fetch_tarball "$VKHEADERS_URL" "$SRC/vulkan-headers" ".ver-$VKHEADERS_VER"
+  make -C "$SRC/nv-codec-headers" PREFIX="$prefix" install >/dev/null
+  mkdir -p "$prefix/include"
+  cp -R "$SRC/vulkan-headers/include/vulkan" "$SRC/vulkan-headers/include/vk_video" "$prefix/include/"
+  echo "[deps] hw headers ffnvcodec $NVCODEC_VER, vulkan $VKHEADERS_VER -> $prefix"
+}
+
+# NVDEC loads libcuda/libnvcuvid and Vulkan loads libvulkan.so.1 on demand: a machine without the
+# driver still loads libav and decodes in software. VAAPI is left out because it links libva.
+video_hw_linux_ff_opts() {
+  echo "--enable-ffnvcodec --enable-nvdec --enable-vulkan --enable-decoder=vp9" \
+    "--enable-hwaccel=h264_nvdec,hevc_nvdec,vp9_nvdec,av1_nvdec,h264_vulkan,hevc_vulkan,vp9_vulkan,av1_vulkan"
+}
+
 video_sw_ff_opts() {
   echo "--enable-libdav1d --enable-libvpx --enable-decoder=libdav1d,libvpx_vp9,av1"
 }
