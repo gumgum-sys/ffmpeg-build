@@ -113,8 +113,11 @@ build_libvpx() {
   fi
   (
     cd "$bdir"
+    # LD is explicit: unset, libvpx probes -lpthread with the HOST's gcc before switching to $cc. On an
+    # x86_64 Linux host that probe links an x86_64 Android object against glibc and "passes", and
+    # the final link then hands -lpthread to ld.lld, which bionic does not have.
     # shellcheck disable=SC2086
-    CC="$cc" CXX="$cc" AR="$ar" RANLIB="${RANLIB:-ranlib}" \
+    CC="$cc" CXX="$cc" LD="$cc" AR="$ar" RANLIB="${RANLIB:-ranlib}" \
       AS="${AS:-nasm}" CFLAGS="$cflags" CXXFLAGS="$cflags" LDFLAGS="$cflags" \
       "$SRC/libvpx/configure" \
         --prefix="$prefix" --libdir="$prefix/lib" \
