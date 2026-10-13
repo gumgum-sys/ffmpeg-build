@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Android, one ABI at a time so CI can fan the four out across parallel runners.
+# Android, one ABI at a time.
 #
 #   scripts/build-android.sh <abi> [pack_output_dir]  abi: arm64-v8a | armeabi-v7a | x86 | x86_64
 #
@@ -47,7 +47,7 @@ TC="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$(uname -s | tr '[:upper:]' '[:lo
 [ -d "$TC" ] || { echo "no NDK toolchain at $TC" >&2; exit 1; }
 # The toolchain goes on PATH and the tools are named bare, because ffmpeg records --cc/--ar/... in
 # the configure line it compiles into the binary. Absolute paths there would publish the NDK
-# location — which on a developer machine is under $HOME, and on a runner is under /home/runner.
+# location, which on a developer machine is under $HOME.
 export PATH="$TC/bin:$PATH"
 export CC="${TRIPLE}${API}-clang"
 export AR=llvm-ar NM=llvm-nm RANLIB=llvm-ranlib STRIP=llvm-strip

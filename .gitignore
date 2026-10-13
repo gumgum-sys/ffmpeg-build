@@ -1,4 +1,4 @@
-# Sources are submodules; build output never enters git — it goes to GitHub Releases.
+# Sources are submodules; build output never enters git.
 /.deps*
 /out/
 /.cache
@@ -7,7 +7,7 @@
 *.o
 *.a
 
-# Signing material never belongs here — it lives in the release environment's secrets.
+# Signing material never belongs here.
 *.p12
 *.cer
 *.keychain-db

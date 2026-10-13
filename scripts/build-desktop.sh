@@ -5,8 +5,8 @@
 #   scripts/build-desktop.sh [output_path]
 #
 # Windows builds natively under MSYS2's MINGW64 shell, not cross-compiled: the toolchain is the same
-# mingw-w64, but a native runner can also RUN the result, which is the only way any of this gets
-# smoke-tested before publishing. Each macOS architecture is likewise built on its own runner.
+# mingw-w64, but a native host can also RUN the result, which is the only way it gets smoke-tested.
+# Each macOS architecture is likewise built on a host of that architecture.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/deps-video.sh"
 

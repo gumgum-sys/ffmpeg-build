@@ -100,8 +100,7 @@ assert_no_stray_deps() {
 }
 
 # ffmpeg compiles its configure line into the binary and prints it with `ffmpeg -version`, so an
-# absolute path from the build machine is published to every user. CI runners are anonymous, but a
-# local build is not — this catches it either way.
+# absolute path from the build machine is published to every user.
 assert_anonymous() {
   local binary="$1" hits
   hits="$(strings -a "$binary" | grep -cE "/(Users|home)/[^/ ]+" || true)"

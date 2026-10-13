@@ -1,7 +1,8 @@
 # ffmpeg-build
 
-FFmpeg builds for YMusic: Android, macOS, Linux and Windows. Binaries are published as GitHub
-Releases, one asset per platform plus `SHA256SUMS`.
+The FFmpeg source and build scripts YMusic builds against: Android, macOS, Linux, Windows and iOS.
+Source only — nothing is prebuilt or released here. YMusicV4 expects this repository checked out
+as a sibling (`../ffmpeg-build`) and packs whatever `out/<slug>/pack` holds into the app.
 
 ## What gets built
 
@@ -15,7 +16,7 @@ Feature set lives in `scripts/common.sh`. Video software (dav1d, libvpx) and har
 
 | target | how |
 | --- | --- |
-| `macos-x86_64`, `macos-arm64` | native, one runner each (no cross-compile) |
+| `macos-x86_64`, `macos-arm64` | native, on a host of that architecture (no cross-compile) |
 | `linux-x86_64`, `linux-arm64` | native |
 | `windows-x86_64` | native, MSYS2 MINGW64 |
 | `windows-arm64` | native, MSYS2 CLANGARM64 |
@@ -28,22 +29,24 @@ Feature set lives in `scripts/common.sh`. Video software (dav1d, libvpx) and har
 git clone --recursive --shallow-submodules <this repo> && cd ffmpeg-build
 scripts/build-desktop.sh                         # out/<slug>/{include,lib,bin,pack}
 scripts/build-android.sh arm64-v8a               # needs ANDROID_NDK_ROOT + patchelf
+scripts/build-ios.sh                             # out/ios-*/{include,lib}, static
 ```
+
+Build one Android ABI per invocation (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`); YMusicV4
+needs `arm64-v8a`, `x86` and `x86_64`.
 
 Each desktop/Android build writes:
 
 | path | what |
 | --- | --- |
 | `out/<slug>/include`, `lib` | headers + shared libav (MSE `FFMPEG_ROOT`) |
-| `out/<slug>/pack` | relocatable flat set: CLI + the same DSOs. This is the CI/release artifact. |
+| `out/<slug>/pack` | relocatable flat set: CLI + the same DSOs. This is what YMusicV4 packs. |
 
 Android pack names the CLI `libffmpeg.so` and **unversions** SONAMEs (`libavcodec.so`, not
 `libavcodec.so.61`) because the installer only extracts filenames that end in `.so`.
 
 iOS (`scripts/build-ios.sh`) also builds dav1d + libvpx into `out/ios-*/lib` for MSE software
 fallback; VideoToolbox is the hardware path. Static only.
-
-Release assets are `ffmpeg-$name.tar.gz` (the pack directory). macOS signs every Mach-O in the tar.
 
 `--shallow-submodules` fetches 21 MB instead of 654 MB. Each script applies
 `patches/0001-ymix-protocol.patch` to the ffmpeg submodule first; re-running is safe.
