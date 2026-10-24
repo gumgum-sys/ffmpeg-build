@@ -33,10 +33,10 @@ $FF_LINK_STATIC
 --enable-network --disable-symver --disable-amd3dnow --disable-amd3dnowext --disable-doc
 --enable-swscale
 --enable-protocol=file,pipe,ymix
---enable-demuxer=aac,mpegts,mov,webvtt,srt,mp3,image2,image_png_pipe,matroska,wav,flac
+--enable-demuxer=aac,mpegts,mov,webvtt,srt,mp3,image2,image_png_pipe,matroska,ogg,wav,flac
 --enable-muxer=ipod,mp3,mp4,webm,matroska,opus,image2,wav,null,flac
 --enable-encoder=aac,libmp3lame,libshine,mpeg4,opus,movtext,webvtt,srt,subrip,mjpeg,flac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le
---enable-decoder=aac,aac_latm,ac3,eac3,srt,subrip,webvtt,mp3,mjpeg,apng,png,opus,h264,hevc,flac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,pcm_f32le,pcm_s16be,pcm_alaw,pcm_mulaw
+--enable-decoder=aac,aac_latm,ac3,eac3,srt,subrip,webvtt,mp3,mjpeg,apng,png,opus,vorbis,h264,hevc,flac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,pcm_f32le,pcm_s16be,pcm_alaw,pcm_mulaw
 --enable-filter=aresample,scale,format,thumbnail
 --enable-bsf=aac_adtstoasc,vp9_superframe
 --enable-libmp3lame --enable-libshine
